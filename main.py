@@ -1,25 +1,36 @@
-from fastapi import FastAPI, Request
+import os
+import requests
+from fastapi import FastAPI
 from supabase import create_client
 
 app = FastAPI()
 
-# นำ URL และ Key จากหน้า API Settings ใน Supabase มาใส่ที่นี่
-URL = "https://xlfeqhpeddgjryywkheo.supabase.co"
-KEY = "sb_secret_qlDd3N89redY1nZYawGIZQ_vraEQT5c"
+# ดึงค่าจาก Settings ที่เราเพิ่งกรอกไป
+URL = os.environ.get("URL")
+KEY = os.environ.get("KEY")
+LOYVERSE_TOKEN = os.environ.get("LOYVERSE_TOKEN")
+
 supabase = create_client(URL, KEY)
 
-@app.post("/webhook")
-async def loyverse_webhook(request: Request):
-    # 1. รับข้อมูลที่ Loyverse ส่งมา
-    payload = await request.json()
+@app.get("/")
+async def root():
+    return {"message": "System is running!"}
+
+# สร้างทางลัดไว้กดเพื่อดึงข้อมูล (Sync)
+@app.get("/sync")
+async def sync_data():
+    headers = {"Authorization": f"Bearer {LOYVERSE_TOKEN}"}
+    # ดึงข้อมูลใบเสร็จล่าสุดจาก Loyverse
+    response = requests.get("https://api.loyverse.com/v1.0/receipts", headers=headers)
     
-    # 2. บันทึกข้อมูลลงตาราง loyverse_sales (ที่เราสร้างในข้อ 1)
-    # เราเก็บทั้งก้อนลงในคอลัมน์ชื่อ 'payload' (ประเภท jsonb)
-    data = {
-        "payload": payload,
-        "receipt_id": payload.get("receipt_number") # ตัวอย่างการดึงค่าบางอย่างออกมาเก็บ
-    }
-    
-    response = supabase.table("loyverse_sales").insert(data).execute()
-    
-    return {"status": "success"}
+    if response.status_code == 200:
+        data = response.json()
+        receipts = data.get("receipts", [])
+        
+        # ส่งข้อมูลเข้า Supabase
+        for receipt in receipts:
+            supabase.table("loyverse_sales").insert(receipt).execute()
+            
+        return {"status": "success", "synced_count": len(receipts)}
+    else:
+        return {"status": "error", "message": response.text}
